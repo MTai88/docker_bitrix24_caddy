@@ -11,6 +11,15 @@
 # Чтобы Bitrix увидел push-сервер при установке, указывайте адрес:
 #   http://caddy/bitrix/sub/
 # (внутри docker-сети Caddy проксирует запросы в push-server)
+#
+# ---- Несколько стеков на одном хосте ----
+# Все контейнеры, сеть и volume не имеют жёстко зашитых имён — Compose
+# использует префикс из COMPOSE_PROJECT_NAME (см. .env.example).
+# Чтобы поднять второй такой же стек в соседней папке:
+#   1) скопировать каталог;
+#   2) в новом .env задать COMPOSE_PROJECT_NAME=other_bitrix (другое!);
+#   3) при необходимости разнести HTTP_PORT/HTTPS_PORT/MYSQL_PORT и т.д.
+# Подробнее: docs/clone-stack.md
 # =============================================================
 
 services:
@@ -18,7 +27,8 @@ services:
   # ---------- Caddy (reverse proxy + auto HTTPS) ----------
   caddy:
     image: caddy:2-alpine
-    container_name: bitrix-caddy
+    # container_name убран намеренно: имя даёт Compose с префиксом проекта,
+    # чтобы можно было держать несколько стеков рядом без коллизий.
     restart: unless-stopped
     ports:
       - "${HTTP_PORT:-80}:80"
@@ -45,7 +55,7 @@ services:
       context: ./php
       dockerfile: Dockerfile
     image: bitrix-php:8.3
-    container_name: bitrix-php
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     volumes:
       - ./www:/var/www/html
@@ -73,7 +83,7 @@ services:
   # ---------- MySQL 8.0 ----------
   mysql:
     image: mysql:8.0
-    container_name: bitrix-mysql
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     command:
       - --default-authentication-plugin=mysql_native_password
@@ -105,7 +115,7 @@ services:
   # но наличие Redis делает поведение предсказуемым).
   push-server:
     image: ikarpovich/bitrix-push-server:latest
-    container_name: bitrix-push
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     environment:
       LISTEN_PORT: "8010"
@@ -123,7 +133,7 @@ services:
   # ---------- Redis (для push-сервера) ----------
   redis:
     image: redis:7-alpine
-    container_name: bitrix-redis
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
     volumes:
@@ -134,7 +144,7 @@ services:
   # ---------- Adminer (GUI для БД) ----------
   adminer:
     image: adminer:latest
-    container_name: bitrix-adminer
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     ports:
       - "${ADMINER_PORT:-8080}:8080"
@@ -149,7 +159,7 @@ services:
   # ---------- MailHog (перехват почты) ----------
   mailhog:
     image: mailhog/mailhog:latest
-    container_name: bitrix-mailhog
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     ports:
       - "${MAILHOG_SMTP_PORT:-1025}:1025"
@@ -161,7 +171,7 @@ services:
   # Раскомментируйте блок или используйте --profile postgres
   postgres:
     image: postgres:16-alpine
-    container_name: bitrix-postgres
+    # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     profiles: ["postgres"]
     volumes:
@@ -181,19 +191,19 @@ services:
 networks:
   bitrix-network:
     driver: bridge
-    name: bitrix-network
+    # name: убран намеренно. Имя сети получает префикс проекта из
+    # COMPOSE_PROJECT_NAME, иначе при втором стеке будет коллизия.
+    # При желании можно переопределить здесь через переменную, но не нужно.
 
 # =============================================================
 # Volumes
 # =============================================================
+# name: убраны намеренно у всех volume. Compose автоматически даёт им имена
+# вида <COMPOSE_PROJECT_NAME>_<имя_тома> (например bitrix_mysql_data).
+# Это позволяет держать несколько стеков рядом с собственными данными.
 volumes:
   mysql_data:
-    name: bitrix-mysql-data
   postgres_data:
-    name: bitrix-postgres-data
   redis_data:
-    name: bitrix-redis-data
   caddy_data:
-    name: bitrix-caddy-data
   caddy_config:
-    name: bitrix-caddy-config
