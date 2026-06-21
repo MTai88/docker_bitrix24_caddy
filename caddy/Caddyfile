@@ -61,11 +61,29 @@
     # Основной root
     root * /var/www/html
 
-    # PHP: все .php файлы и корневой путь — на FPM
-    @php path *.php /
-    php_fastcgi @php php:9000
+    # PHP-файлы (включая /bitrix/urlrewrite.php и /index.php) — сразу в FPM
+    @php path *.php
+    handle @php {
+        php_fastcgi php:9000
+    }
 
-    # Статические файлы (с автоматическим index)
+    # Корневой путь "/" — на /index.php (Битрикс ожидает index.php)
+    handle / {
+        rewrite * /index.php
+        php_fastcgi php:9000
+    }
+
+    # Любая поддиректория (path */):
+    #   - пробуем index.php внутри (например /online/index.php);
+    #   - иначе fallback в /bitrix/urlrewrite.php (front controller Битрикса),
+    #     как это делает стандартный .htaccess через mod_rewrite.
+    @dir path */
+    handle @dir {
+        try_files {path}index.php /bitrix/urlrewrite.php
+        php_fastcgi php:9000
+    }
+
+    # Всё прочее — статика через file_server
     file_server
 
     # Запрет обращения к чувствительным файлам
