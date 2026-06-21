@@ -64,11 +64,24 @@ RUN pecl install xdebug \
 # собственные настройки через opcache-bitrix.ini (копируется в образ)
 COPY opcache-bitrix.ini /usr/local/etc/php/conf.d/opcache-bitrix.ini
 
-# Создаём директории под сайт, логи и отдаём их www-data
-# (UID/GID 33 — стандартные для пользователя www-data в php:fpm)
-RUN mkdir -p /var/www/html /var/www/html/bitrix /var/www/html/upload /var/www/html/cache \
+# Создаём директории под сайт, логи и отдаём их нужному uid.
+# PHP-FPM в compose запускается под uid 1000:1000 (как WSL-юзер dev),
+# чтобы иметь право писать в bind-mount с хостовой ФС.
+# Каталоги кеша Битрикса (cache/sessions и т.д.) создаём заранее,
+# иначе PHP-FPM не сможет писать туда сессии при первом запросе
+# (session.save_path=/var/www/html/cache/sessions).
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN mkdir -p /var/www/html \
+             /var/www/html/bitrix \
+             /var/www/html/upload \
+             /var/www/html/cache \
+             /var/www/html/cache/sessions \
+             /var/www/html/cache/upload \
+             /var/www/html/cache/wsdl \
+             /var/www/html/cache/opcache \
              /var/log/php \
-    && chown -R www-data:www-data /var/www/html /var/log/php
+    && chown -R ${APP_UID}:${APP_GID} /var/www/html /var/log/php
 
 WORKDIR /var/www/html
 
