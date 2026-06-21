@@ -59,24 +59,24 @@
         php_fastcgi php:9000
     }
 
-    # Корневой путь "/" — на /index.php (Битрикс ожидает index.php)
-    handle / {
-        rewrite * /index.php
-        php_fastcgi php:9000
-    }
+    # Front controller Битрикса (аналог mod_rewrite из .htaccess):
+    #   - если {path} — реальный файл → оставить как есть;
+    #   - если {path}/index.php существует → подменить URI на него;
+    #   - иначе → fallback в /bitrix/urlrewrite.php (Битрикс сам разберёт ЧПУ).
+    # Это лечит /online/ (берёт /online/index.php), /rest/calendar.settings.get.json
+    # (файла нет → urlrewrite.php → REST-роутер Битрикса), и любые разделы портала.
+    handle {
+        try_files {path} {path}/index.php /bitrix/urlrewrite.php
 
-    # Любая поддиректория (path */):
-    #   - пробуем index.php внутри (например /online/index.php);
-    #   - иначе fallback в /bitrix/urlrewrite.php (front controller Битрикса),
-    #     как это делает стандартный .htaccess через mod_rewrite.
-    @dir path */
-    handle @dir {
-        try_files {path}index.php /bitrix/urlrewrite.php
-        php_fastcgi php:9000
-    }
+        # Если после try_files получился .php — отдать в FPM
+        @isphp path *.php
+        handle @isphp {
+            php_fastcgi php:9000
+        }
 
-    # Всё прочее — статика через file_server
-    file_server
+        # Иначе — статика (CSS, JS, картинки, шрифты)
+        file_server
+    }
 
     # Запрет обращения к чувствительным файлам
     @blocked path /.env* /.git* /.htaccess* /composer.* /docker-compose.* /Dockerfile*
