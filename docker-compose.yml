@@ -1,0 +1,199 @@
+# =============================================================
+# Docker Compose для Bitrix24 (PHP 8.3-FPM + Caddy + MySQL)
+# =============================================================
+# Запуск:
+#   docker compose up -d --build
+#
+# Чтобы добавить PostgreSQL (опционально), запустите с профилем:
+#   docker compose --profile postgres up -d
+#
+# После старта откройте https://${DOMAIN} (или http для LOCAL_DEV=true)
+# Чтобы Bitrix увидел push-сервер при установке, указывайте адрес:
+#   http://caddy/bitrix/sub/
+# (внутри docker-сети Caddy проксирует запросы в push-server)
+# =============================================================
+
+services:
+
+  # ---------- Caddy (reverse proxy + auto HTTPS) ----------
+  caddy:
+    image: caddy:2-alpine
+    container_name: bitrix-caddy
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      # сайт из хоста пробрасывается в тот же путь, что видит php
+      - ./www:/var/www/html:ro
+    environment:
+      - DOMAIN=${DOMAIN}
+    depends_on:
+      php:
+        condition: service_started
+      push-server:
+        condition: service_started
+    networks:
+      - bitrix-network
+
+  # ---------- PHP-FPM 8.3 с расширениями под Bitrix24 ----------
+  php:
+    build:
+      context: ./php
+      dockerfile: Dockerfile
+    image: bitrix-php:8.3
+    container_name: bitrix-php
+    restart: unless-stopped
+    volumes:
+      - ./www:/var/www/html
+      - ./php/php.ini:/usr/local/etc/php/conf.d/99-bitrix.ini:ro
+      - ./php/xdebug.ini:/usr/local/etc/php/conf.d/98-xdebug.ini:ro
+      # Логи PHP (error_log) и Xdebug — наружу, чтобы смотреть без exec
+      - ./logs/php:/var/log/php
+    environment:
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT:-512M}
+      - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME:-300}
+      - PHP_UPLOAD_MAX_FILESIZE=${PHP_UPLOAD_MAX_FILESIZE:-128M}
+      - PHP_POST_MAX_SIZE=${PHP_POST_MAX_SIZE:-128M}
+      - TZ=${TZ:-Europe/Moscow}
+      # Xdebug (по умолчанию выключен, см. ./php/xdebug.ini)
+      - XDEBUG_MODE=${XDEBUG_MODE:-off}
+      - XDEBUG_CLIENT_HOST=${XDEBUG_CLIENT_HOST:-host.docker.internal}
+      - XDEBUG_CLIENT_PORT=${XDEBUG_CLIENT_PORT:-9003}
+      - XDEBUG_START_WITH_REQUEST=${XDEBUG_START_WITH_REQUEST:-trigger}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - bitrix-network
+
+  # ---------- MySQL 8.0 ----------
+  mysql:
+    image: mysql:8.0
+    container_name: bitrix-mysql
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb_buffer_pool_size=512M
+    volumes:
+      - mysql_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-bitrix}
+      MYSQL_USER: ${MYSQL_USER:-bitrix}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - bitrix-network
+
+  # ---------- Push-сервер Bitrix (Node.js)
+  # Используем проверенный community-образ ikarpovich/bitrix-push-server,
+  # который содержит оригинальный push-server от Bitrix Inc.
+  # Требует Redis для координации между нодами (для одной ноды — факультативно,
+  # но наличие Redis делает поведение предсказуемым).
+  push-server:
+    image: ikarpovich/bitrix-push-server:latest
+    container_name: bitrix-push
+    restart: unless-stopped
+    environment:
+      LISTEN_PORT: "8010"
+      LISTEN_HOSTNAME: "0.0.0.0"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SECURITY_KEY: ${PUSH_SECURITY_KEY:-change_me_push_security_key_32_chars_min}
+      MODE: pub
+    depends_on:
+      redis:
+        condition: service_started
+    networks:
+      - bitrix-network
+
+  # ---------- Redis (для push-сервера) ----------
+  redis:
+    image: redis:7-alpine
+    container_name: bitrix-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - bitrix-network
+
+  # ---------- Adminer (GUI для БД) ----------
+  adminer:
+    image: adminer:latest
+    container_name: bitrix-adminer
+    restart: unless-stopped
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+      ADMINER_DESIGN: pepa-linha-dark
+    depends_on:
+      - mysql
+    networks:
+      - bitrix-network
+
+  # ---------- MailHog (перехват почты) ----------
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: bitrix-mailhog
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_UI_PORT:-8025}:8025"
+    networks:
+      - bitrix-network
+
+  # ---------- PostgreSQL (ОПЦИОНАЛЬНО, включается профилем) ----------
+  # Раскомментируйте блок или используйте --profile postgres
+  postgres:
+    image: postgres:16-alpine
+    container_name: bitrix-postgres
+    restart: unless-stopped
+    profiles: ["postgres"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bitrix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bitrixpass}
+      POSTGRES_DB: ${POSTGRES_DB:-bitrix}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - bitrix-network
+
+# =============================================================
+# Networks
+# =============================================================
+networks:
+  bitrix-network:
+    driver: bridge
+    name: bitrix-network
+
+# =============================================================
+# Volumes
+# =============================================================
+volumes:
+  mysql_data:
+    name: bitrix-mysql-data
+  postgres_data:
+    name: bitrix-postgres-data
+  redis_data:
+    name: bitrix-redis-data
+  caddy_data:
+    name: bitrix-caddy-data
+  caddy_config:
+    name: bitrix-caddy-config

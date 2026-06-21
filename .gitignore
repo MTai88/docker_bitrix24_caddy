@@ -1,0 +1,44 @@
+# =============================================================
+# .gitignore для docker_bitrix24
+# =============================================================
+
+# ---------- Секреты и локальная конфигурация ----------
+.env
+.env.local
+.env.*.local
+
+# ---------- Логи ----------
+logs/
+*.log
+!caddy/.gitkeep
+
+# ---------- IDE / редакторы ----------
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Docker — локальные override и артефакты ----------
+docker-compose.override.yml
+docker-compose.override.yaml
+.docker/
+*.pid
+
+# ---------- Бэкапы и временные файлы ----------
+*.bak
+*.tmp
+*.orig
+*.rej
+*.zip
+*.tgz
+
+# Служебные файлы — НЕ игнорировать
+!.gitignore
+!.env.example
+!.gitattributes
+!README.md

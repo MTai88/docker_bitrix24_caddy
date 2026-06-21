@@ -1,0 +1,20 @@
+#!/bin/sh
+# Healthcheck для PHP-FPM.
+# Проверяем через /proc/net/tcp и /proc/net/tcp6, что порт 9000 в состоянии LISTEN (st=0A).
+# PHP-FPM по умолчанию слушает на IPv6 [::]:9000 (dual-stack).
+
+check_port() {
+    file="$1"
+    [ -r "$file" ] || return 1
+    # Ищем порт 9000 (hex 2328) в состоянии LISTEN (0A)
+    if awk 'NR>1' "$file" | grep -q ':2328 .* 0A '; then
+        return 0
+    fi
+    return 1
+}
+
+if check_port /proc/net/tcp6 || check_port /proc/net/tcp; then
+    exit 0
+fi
+
+exit 1
