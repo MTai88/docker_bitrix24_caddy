@@ -166,6 +166,39 @@ services:
       - "${MAILHOG_UI_PORT:-8025}:8025"
     networks:
       - bitrix-network
+      
+  # ---------- Init pull-module (одноразовая настройка) ----------
+  # Применяет правильные настройки модуля pull в БД Битрикса:
+  # nginx=Y, nginx_version=4, enable_protobuf=Y, signature_key=..., и т.д.
+  # Без этого шага Битрикс будет считать, что push не настроен, и
+  # отправлять события в никуда (а не в наш push-server). Скрипт
+  # идемпотентный: при повторных запусках ничего не делает, если
+  # настройки уже совпадают с ожидаемыми.
+  #
+  # Если нужно перевыставить после изменения .env:
+  #   docker compose up pull-init
+  # или
+  #   docker compose restart pull-init
+  pull-init:
+    image: bitrix-php:8.3
+    depends_on:
+      php:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_USER: ${MYSQL_USER:-bitrix}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_NAME: ${MYSQL_DATABASE:-bitrix}
+      PUSH_SECURITY_KEY: ${PUSH_SECURITY_KEY}
+      PULL_HTTP_PATH: http://caddy/bitrix/pub/
+    volumes:
+      - ./scripts/pull-init.php:/init.php:ro
+    entrypoint: ["php", "/init.php"]
+    networks:
+      - bitrix-network
+    restart: "on-failure"  # перезапускать только если exit != 0 (например, MySQL ещё не готов)
 
   # ---------- PostgreSQL (ОПЦИОНАЛЬНО, включается профилем) ----------
   # Раскомментируйте блок или используйте --profile postgres
