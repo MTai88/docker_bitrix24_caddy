@@ -16,21 +16,113 @@
 
 {
     admin off
+    # Отключаем auto_https: иначе Caddy по умолчанию редиректит HTTP→HTTPS
+    # (308), а PHP-контейнер внутри docker-сети не доверяет самоподписанному
+    # сертификату Caddy (tls internal) и не может опубликовать push-события.
+    # Публичный HTTPS остаётся доступным через явный https://-блок ниже.
+    # Отключаем только автоматический HTTP→HTTPS-редирект (disable_redirects),
+    # но НЕ auto_https целиком: иначе Caddy перестанет выпускать TLS-сертификат
+    # для https://-блока и HTTPS рукопожатие будет падать.
+    # Нужно это потому, что PHP-контейнер внутри docker-сети не доверяет
+    # самоподписанному сертификату Caddy (tls internal) и не может опубликовать
+    # push-события, если получит 308 на HTTPS при попытке POST по HTTP.
+    auto_https disable_redirects
 }
 
-# Главный сайт — {$DOMAIN} (плюс localhost для удобства разработки)
-{$DOMAIN}, localhost, 127.0.0.1, ::1 {
+# Главный сайт — {$DOMAIN} (плюс localhost для удобства разработки).
+# Блок разделён на два: HTTP-only (межсервисный push + редирект всего
+# остального на HTTPS) и HTTPS (публичный сайт).
+# auto_https off в глобальной секции нужен, чтобы HTTP-запросы не
+# редиректились автоматически — иначе PHP-контейнер внутри docker-сети
+# не сможет опубликовать push-события (не доверяет tls internal).
+
+# ---------- HTTP-only listener ----------
+# /bitrix/pub/, /bitrix/pubweb/, /bitrix/api/ — POST от Битрикса → push-server PUB.
+# /bitrix/sub/, /bitrix/subws/ — клиентская подписка → push-server SUB.
+# Остальное — редирект на HTTPS-зеркало того же хоста.
+http://{$DOMAIN}, http://localhost, http://127.0.0.1, http://[::1], http://caddy {
+    # Публикация команд со стороны Битрикса (PHP) и JSON-RPC.
+    # route с inline matchers — более высокий приоритет, чем redir.
+    route {
+        @pushPub path /bitrix/pub /bitrix/pub/ /bitrix/pub/* /bitrix/pubweb /bitrix/pubweb/ /bitrix/pubweb/* /bitrix/api /bitrix/api/ /bitrix/api/*
+        handle @pushPub {
+            reverse_proxy push-server:8010 {
+                transport http {
+                    dial_timeout 30s
+                    response_header_timeout 60s
+                    read_timeout 3600s
+                    write_timeout 60s
+                }
+            }
+        }
+    }
+
+    # Подписка клиентов на события push.
+    route {
+        @pushSub path /bitrix/sub* /bitrix/subws*
+        handle @pushSub {
+            reverse_proxy push-server-sub:8011 {
+                transport http {
+                    dial_timeout 30s
+                    response_header_timeout 60s
+                    read_timeout 3600s
+                    write_timeout 60s
+                }
+            }
+        }
+    }
+
+    # Всё прочее по HTTP (включая запросы извне) — на HTTPS-зеркало.
+    # ВАЖНО: redir должен идти ПОСЛЕ всех handle и быть в отдельном handle
+    # для unmatched paths, иначе он перехватывает ВСЕ запросы, включая
+    # те, что матчатся нашими pushPub/pushSub matcher'ами.
+    @unmatched not {
+        path /bitrix/pub /bitrix/pub/ /bitrix/pub/* /bitrix/pubweb /bitrix/pubweb/ /bitrix/pubweb/* /bitrix/api /bitrix/api/ /bitrix/api/*
+        path /bitrix/sub /bitrix/sub/ /bitrix/sub/* /bitrix/subws /bitrix/subws/ /bitrix/subws/*
+    }
+    handle @unmatched {
+        redir https://{host}{uri} permanent
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
+
+# ---------- HTTPS listener — публичный сайт ----------
+https://{$DOMAIN}, https://localhost, https://127.0.0.1, https://[::1] {
     encode zstd gzip
 
     request_body {
         max_size 256MB
     }
 
-    # WebSocket, long-polling, публикация и JSON-RPC push-сервера Bitrix.
-    # Один matcher покрывает все пути, которые использует форма «Push and RSS» в админке.
-    @push path /bitrix/sub/* /bitrix/subws/* /bitrix/pub/* /bitrix/pubweb/* /bitrix/api/*
-    handle @push {
+    # Публикация команд со стороны Битрикса (PHP) и JSON-RPC.
+    # Дублируем то же правило из http://-блока: по HTTPS Битрикс стучится
+    # за событиями/JSON-RPC в /bitrix/api/ и /bitrix/pub*/ (см. настройки
+    # модуля pull), и публикация должна работать и снаружи по HTTPS тоже.
+    @pushPub path /bitrix/pub* /bitrix/pubweb* /bitrix/api*
+    handle @pushPub {
         reverse_proxy push-server:8010 {
+            transport http {
+                dial_timeout 30s
+                response_header_timeout 60s
+                read_timeout 3600s
+                write_timeout 60s
+            }
+        }
+    }
+
+    # Подписка клиентов на push-события — основной сценарий.
+    # /bitrix/sub/   — long-polling fallback (старые браузеры без WS).
+    # /bitrix/subws/ — WebSocket. Браузер открывает его именно по wss://,
+    # поэтому правило ОБЯЗАТЕЛЬНО должно быть и в https://-блоке, иначе
+    # Caddy отправит запрос в PHP и вернёт 404.
+    @pushSub path /bitrix/sub* /bitrix/subws*
+    handle @pushSub {
+        reverse_proxy push-server-sub:8011 {
             transport http {
                 dial_timeout 30s
                 response_header_timeout 60s
