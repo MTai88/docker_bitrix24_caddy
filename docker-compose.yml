@@ -54,16 +54,29 @@ services:
     build:
       context: ./php
       dockerfile: Dockerfile
+      args:
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
     image: bitrix-php:8.3
     # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
+    # Под каким uid/gid работают воркеры FPM и entrypoint.
+    # Совпадает с владельцем bind-mount ./www (на хосте — WSL-юзер dev,
+    # uid 1000), иначе PHP не сможет писать сессии/загруженные файлы.
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
     volumes:
       - ./www:/var/www/html
       - ./php/php.ini:/usr/local/etc/php/conf.d/99-bitrix.ini:ro
       - ./php/xdebug.ini:/usr/local/etc/php/conf.d/98-xdebug.ini:ro
       # Логи PHP (error_log) и Xdebug — наружу, чтобы смотреть без exec
       - ./logs/php:/var/log/php
+      # Служебные кеши PHP (sessions, upload_tmp, wsdl, opcache) —
+      # в именованном volume, не в bind-mount проекта. Так они
+      # переживают редеплой контейнера и не оседают в ./www/cache.
+      - php_runtime:/var/lib/bitrix-runtime
     environment:
+      - APP_UID=${APP_UID:-1000}
+      - APP_GID=${APP_GID:-1000}
       - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT:-512M}
       - PHP_MAX_EXECUTION_TIME=${PHP_MAX_EXECUTION_TIME:-300}
       - PHP_UPLOAD_MAX_FILESIZE=${PHP_UPLOAD_MAX_FILESIZE:-128M}
@@ -240,3 +253,4 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  php_runtime:

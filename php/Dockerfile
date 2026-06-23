@@ -67,21 +67,18 @@ COPY opcache-bitrix.ini /usr/local/etc/php/conf.d/opcache-bitrix.ini
 # Создаём директории под сайт, логи и отдаём их нужному uid.
 # PHP-FPM в compose запускается под uid 1000:1000 (как WSL-юзер dev),
 # чтобы иметь право писать в bind-mount с хостовой ФС.
-# Каталоги кеша Битрикса (cache/sessions и т.д.) создаём заранее,
-# иначе PHP-FPM не сможет писать туда сессии при первом запросе
-# (session.save_path=/var/www/html/cache/sessions).
+# Каталоги служебных кешей PHP (sessions, upload_tmp, wsdl, opcache)
+# живут в именованном volume php_runtime (/var/lib/bitrix-runtime) —
+# создаются в entrypoint.sh при старте контейнера, потому что том
+# при первом mount приходит пустым, и Dockerfile их туда положить не может.
 ARG APP_UID=1000
 ARG APP_GID=1000
 RUN mkdir -p /var/www/html \
              /var/www/html/bitrix \
              /var/www/html/upload \
-             /var/www/html/cache \
-             /var/www/html/cache/sessions \
-             /var/www/html/cache/upload \
-             /var/www/html/cache/wsdl \
-             /var/www/html/cache/opcache \
+             /var/lib/bitrix-runtime \
              /var/log/php \
-    && chown -R ${APP_UID}:${APP_GID} /var/www/html /var/log/php
+    && chown -R ${APP_UID}:${APP_GID} /var/www/html /var/lib/bitrix-runtime /var/log/php
 
 WORKDIR /var/www/html
 
@@ -95,9 +92,15 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 COPY php-fpm-healthcheck /usr/local/bin/php-fpm-healthcheck
 RUN chmod +x /usr/local/bin/php-fpm-healthcheck
 
+# Entrypoint: создаёт каталоги под runtime-кеши PHP
+# (volume php_mount приходит пустым — папки приходится делать на старте).
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 # Healthcheck самого образа: проверяем, что FPM слушает порт 9000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD php-fpm-healthcheck || exit 1
 
-# По умолчанию запускаем php-fpm
+# По умолчанию запускаем php-fpm под entrypoint
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["php-fpm"]
