@@ -58,6 +58,10 @@ services:
         APP_UID: ${APP_UID:-1000}
         APP_GID: ${APP_GID:-1000}
     image: bitrix-php:8.3
+    # pull_policy: build — образ локальный (билдим из ./php/Dockerfile),
+    # в Docker Hub его нет. Без этой строки Compose пытается сделать
+    # `docker pull bitrix-php:8.3` и валится с "manifest unknown".
+    pull_policy: build
     # container_name убран: имя даёт Compose с префиксом проекта.
     restart: unless-stopped
     # Под каким uid/gid работают воркеры FPM и entrypoint.
@@ -194,6 +198,9 @@ services:
   #   docker compose restart pull-init
   pull-init:
     image: bitrix-php:8.3
+    # pull_policy: build — переиспользует локально собранный php-сервисом
+    # образ, а не пытается стянуть его из реестра.
+    pull_policy: build
     depends_on:
       php:
         condition: service_started
