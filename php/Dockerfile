@@ -50,15 +50,23 @@ RUN docker-php-ext-install -j$(nproc) \
         exif
 
 # =============================================================
-# Xdebug 3.x — устанавливается через pecl.
+# Xdebug 3.x — собираем из исходников с xdebug.org (минуя pecl.php.net,
+# который периодически отдаёт пустой список пакетов).
 # Конфиг подключается из ./php/xdebug.ini (монтируется через compose).
 # По умолчанию Xdebug ВЫКЛЮЧЕН — включается через env XDEBUG_ENABLE=1
 # или через query-параметр XDEBUG_SESSION=1 (при trigger-режиме).
+# Версию xdebug можно зафиксировать, переопределив ARG XDEBUG_VERSION.
 # =============================================================
-RUN pecl install xdebug \
+ARG XDEBUG_VERSION=3.4.0
+RUN curl -fsSL "https://xdebug.org/files/xdebug-${XDEBUG_VERSION}.tgz" -o /tmp/xdebug.tgz \
+    && tar -xzf /tmp/xdebug.tgz -C /tmp \
+    && cd /tmp/xdebug-${XDEBUG_VERSION} \
+    && phpize \
+    && ./configure --enable-xdebug \
+    && make -j"$(nproc)" \
+    && make install \
     && docker-php-ext-enable xdebug \
-    && pecl clear-cache \
-    && rm -rf /tmp/pear
+    && rm -rf /tmp/xdebug.tgz /tmp/xdebug-${XDEBUG_VERSION}
 
 # opcache.recommended.ini от базового образа уже включён, но добавим
 # собственные настройки через opcache-bitrix.ini (копируется в образ)
