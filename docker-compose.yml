@@ -46,6 +46,8 @@ services:
         condition: service_started
       push-server:
         condition: service_started
+      push-server-sub:
+        condition: service_started
     networks:
       - bitrix-network
 
@@ -141,6 +143,23 @@ services:
       REDIS_PORT: "6379"
       SECURITY_KEY: ${PUSH_SECURITY_KEY:-change_me_push_security_key_32_chars_min}
       MODE: pub
+    depends_on:
+      redis:
+        condition: service_started
+    networks:
+      - bitrix-network
+
+  # Подписчики (long-polling / WebSocket). Caddy проксирует /bitrix/sub* сюда.
+  push-server-sub:
+    image: ikarpovich/bitrix-push-server:latest
+    restart: unless-stopped
+    environment:
+      LISTEN_PORT: "8011"
+      LISTEN_HOSTNAME: "0.0.0.0"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SECURITY_KEY: ${PUSH_SECURITY_KEY:-change_me_push_security_key_32_chars_min}
+      MODE: sub
     depends_on:
       redis:
         condition: service_started

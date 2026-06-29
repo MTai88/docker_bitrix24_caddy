@@ -29,6 +29,8 @@ docker-compose.override.yaml
 .docker/
 *.pid
 
+www/
+
 # ---------- Бэкапы и временные файлы ----------
 *.bak
 *.tmp

@@ -12,6 +12,9 @@ ENV TZ=${TZ}
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libzip-dev \
         libpng-dev \
+        libjpeg62-turbo-dev \
+        libfreetype6-dev \
+        libwebp-dev \
         libxml2-dev \
         libonig-dev \
         libcurl4-openssl-dev \
@@ -33,7 +36,9 @@ RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezo
 
 # PHP-расширения, необходимые Bitrix24
 # Замечание: расширение `xml` уже включает simplexml, dom, xmlreader, xmlwriter.
-RUN docker-php-ext-install -j$(nproc) \
+# GD собираем с JPEG/FreeType/WebP — без --with-jpeg нет imagecreatefromjpeg().
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install -j$(nproc) \
         mysqli \
         pdo_mysql \
         gd \
